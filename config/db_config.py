@@ -13,7 +13,7 @@ PG_DB = os.getenv("PG_DB", "postgres")
 PG_USER = os.getenv("PG_USER", "postgres")
 PG_PASSWORD = os.getenv("PG_PASSWORD", "postgres")
 
-PG_JDBC_URL = f"jdbc:postgresql://{PG_HOST}:{PG_PORT}/{PG_DB}"
+PG_JDBC_URL = f"jdbc:postgresql://{PG_HOST}:{PG_PORT}/{PG_DB}?sslmode=require"
 PG_JDBC_PROPS = {
     "user": PG_USER,
     "password": PG_PASSWORD,
