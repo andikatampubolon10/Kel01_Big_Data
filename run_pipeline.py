@@ -26,6 +26,7 @@ def main():
 
     # Path dataset kamu adalah dataset/, bukan data/
     df_raw = read_online_retail_csv(spark, "dataset/online_retail.csv")
+    print("Rows df_raw:", df_raw.count())
     df_clean = clean_online_retail(df_raw, drop_null_customer=True)
     df_sales = add_total_amount(df_clean)
 
@@ -63,6 +64,10 @@ def main():
                 },
             }
         )
+
+    print("Rows df_labeled:", df_labeled.count())
+    print("Clean:", df_clean.count())
+    print("Sales:", df_sales.count())
 
     upsert_customer_segments(docs, MONGO_URI, MONGO_DB, collection="customer_segments")
 
