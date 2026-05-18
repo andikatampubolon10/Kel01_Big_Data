@@ -16,8 +16,8 @@ def clean_online_retail(df_raw: DataFrame, drop_null_customer: bool = True) -> D
     for c in ["InvoiceNo", "StockCode", "Description", "CustomerID", "Country", "InvoiceDate"]:
         df = df.withColumn(c, trim(col(c)))
 
-    # parse timestamp; format umum dataset: "12/1/2010 8:26"
-    df = df.withColumn("InvoiceTS", to_timestamp(col("InvoiceDate"), "M/d/yyyy H:mm"))
+    # parse timestamp; format di CSV: "2010-12-01 08:26:00" (yyyy-MM-dd HH:mm:ss)
+    df = df.withColumn("InvoiceTS", to_timestamp(col("InvoiceDate"), "yyyy-MM-dd HH:mm:ss"))
 
     # buang baris yang gagal parse tanggal
     df = df.filter(col("InvoiceTS").isNotNull())

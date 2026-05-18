@@ -24,14 +24,21 @@ from src.storage.nosql_writer import upsert_customer_segments
 def main():
     spark = create_spark()
 
-    # Path dataset kamu adalah dataset/, bukan data/
+    # --- Step 1: Ingestion ---
+    print(">>> Membaca data dari CSV...")
     df_raw = read_online_retail_csv(spark, "dataset/online_retail.csv")
-    print("Rows df_raw:", df_raw.count())
+    print(f"Rows df_raw: {df_raw.count()}")
+
+    # --- Step 2: Cleaning ---
+    print(">>> Melakukan data cleaning...")
     df_clean = clean_online_retail(df_raw, drop_null_customer=True)
     df_sales = add_total_amount(df_clean)
+    print(f"Rows df_clean: {df_clean.count()}")
 
-    # --- Write monthly sales aggregation to Supabase/Postgres
+    # --- Step 3: Sales Trend (SQL) ---
+    print(">>> Menghitung tren penjualan bulanan...")
     df_monthly = sales_monthly(df_sales)
+    print(">>> Menyimpan tren ke PostgreSQL (Supabase)...")
     write_df_to_postgres(
         df_monthly,
         table="agg_sales_monthly",
@@ -40,11 +47,15 @@ def main():
         mode="overwrite",
     )
 
-    # --- RFM + KMeans
+    # --- Step 4: RFM & Clustering (NoSQL) ---
+    print(">>> Menghitung RFM...")
     rfm = compute_rfm(df_sales)
+    print(f"RFM Count: {rfm.count()}")
+
+    print(">>> Menjalankan algoritma KMeans (ini mungkin memakan waktu)...")
     df_clustered, sil = rfm_kmeans(rfm, k=4)
     df_labeled = label_clusters_simple(df_clustered)
-    print("Silhouette:", sil)
+    print(f"Silhouette Score: {sil}")
 
     # --- Write segments to MongoDB
     pdf = df_labeled.toPandas()  # aman karena jumlah customer jauh lebih kecil dari baris transaksi
@@ -65,12 +76,10 @@ def main():
             }
         )
 
-    print("Rows df_labeled:", df_labeled.count())
-    print("Clean:", df_clean.count())
-    print("Sales:", df_sales.count())
-
+    print(">>> Menyimpan hasil segmentasi ke MongoDB Atlas...")
     upsert_customer_segments(docs, MONGO_URI, MONGO_DB, collection="customer_segments")
 
+    print(">>> Pipeline Selesai dengan Sukses!")
     spark.stop()
 
 
