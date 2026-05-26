@@ -102,88 +102,84 @@ def generate_mock_mongo_data():
         })
     return pd.DataFrame(data)
 
-# Untuk PostgreSQL, karena keterbatasan driver di environment Streamlit tanpa psycopg2, 
-# kita akan menggunakan fungsi mock atau memberikan panduan jika gagal connect.
-# Namun, untuk demo 'Integrasi', kita akan mensimulasikan data SQL yang berelasi.
-
+# --- DATA RAW UNTUK FILTER DINAMIS ---
 @st.cache_data
-def get_postgres_data():
+def load_raw_data():
     try:
-        # Simulasi data dari Postgres table: agg_sales_monthly
-        data = {
-            "Month": ["2010-12", "2011-01", "2011-02", "2011-03", "2011-04", "2011-05", "2011-06", "2011-07", "2011-08", "2011-09", "2011-10", "2011-11", "2011-12"],
-            "Total_Sales": [748957.02, 560000.26, 498062.65, 683267.02, 493207.12, 723333.51, 691123.12, 681300.11, 682680.51, 1017596.33, 1070704.67, 1461756.22, 433668.01]
-        }
-        return pd.DataFrame(data)
+        # Gunakan encoding ISO-8859-1 karena file retail umumnya memiliki karakter khusus
+        df = pd.read_csv("dataset/online_retail.csv", encoding="ISO-8859-1")
+        df = df.dropna(subset=['CustomerID'])
+        df = df[df['Quantity'] > 0] # Buang retur agar pendapatan bersih
+        df['InvoiceDate'] = pd.to_datetime(df['InvoiceDate'])
+        df['TotalAmount'] = df['Quantity'] * df['UnitPrice']
+        df['MonthStr'] = df['InvoiceDate'].dt.strftime('%Y-%m')
+        df['DayOfWeek'] = df['InvoiceDate'].dt.day_name()
+        df['Hour'] = df['InvoiceDate'].dt.hour
+        return df
     except Exception as e:
-        st.error(f"Error Postgres Simulation: {e}")
+        st.error(f"Gagal memuat dataset: {e}")
         return pd.DataFrame()
 
-@st.cache_data
-def get_day_of_week_sales():
-    days = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sunday"]
-    sales = [955520.12, 874021.45, 831204.62, 1012543.12, 762391.24, 493201.12]
-    transactions = [1850, 1720, 1690, 2150, 1580, 1100]
-    return pd.DataFrame({
-        "Day": days,
-        "Total_Sales": sales,
-        "Transactions": transactions
-    })
+df_raw = load_raw_data()
 
-@st.cache_data
-def get_hourly_sales():
-    hours = list(range(6, 21))
-    sales = [1250.20, 12543.10, 48950.45, 125483.90, 254890.30, 289540.60, 267850.40, 248900.50, 312540.20, 210450.60, 112540.30, 48950.20, 15480.10, 2450.10, 890.20]
-    transactions = [12, 85, 230, 680, 1150, 1420, 1290, 1180, 1510, 950, 560, 240, 98, 15, 6]
-    all_hours = list(range(24))
-    sales_map = {h: 0.0 for h in all_hours}
-    tx_map = {h: 0 for h in all_hours}
-    for h, s, t in zip(hours, sales, transactions):
-        sales_map[h] = s
-        tx_map[h] = t
-    return pd.DataFrame({
-        "Hour": [f"{h:02d}:00" for h in all_hours],
-        "Total_Sales": [sales_map[h] for h in all_hours],
-        "Transactions": [tx_map[h] for h in all_hours]
-    })
+# --- GLOBAL FILTERS (SIDEBAR) ---
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔍 Filter Interaktif")
 
-@st.cache_data
-def get_geographic_sales():
-    countries = ["United Kingdom", "Germany", "France", "EIRE", "Spain", "Netherlands", "Belgium", "Switzerland", "Portugal", "Australia"]
-    sales = [7308391.24, 228867.14, 209715.11, 263276.82, 61577.12, 285446.34, 41196.34, 56445.26, 33439.89, 138521.31]
-    return pd.DataFrame({
-        "Country": countries,
-        "Total_Sales": sales
-    })
+if not df_raw.empty:
+    min_date = df_raw["InvoiceDate"].min().date()
+    max_date = df_raw["InvoiceDate"].max().date()
+    
+    date_range = st.sidebar.date_input("Rentang Waktu Transaksi", [min_date, max_date], min_value=min_date, max_value=max_date)
+    
+    countries = sorted(df_raw["Country"].unique().tolist())
+    # Default top 5 countries
+    default_countries = [c for c in ["United Kingdom", "Germany", "France", "EIRE", "Netherlands"] if c in countries]
+    if not default_countries: default_countries = countries[:5]
+    
+    selected_countries = st.sidebar.multiselect("Pilih Negara", countries, default=default_countries)
+    
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+        # Filter dataframe
+        df_filtered = df_raw[
+            (df_raw["InvoiceDate"].dt.date >= start_date) & 
+            (df_raw["InvoiceDate"].dt.date <= end_date) &
+            (df_raw["Country"].isin(selected_countries))
+        ]
+    else:
+        df_filtered = df_raw.copy()
+else:
+    df_filtered = pd.DataFrame()
 
-@st.cache_data
-def get_top_products_sales():
-    products = [
-        "WORLD WAR 2 GLIDERS ASSTD DESIGNS",
-        "JUMBO BAG RED RETROSPOT",
-        "ASSORTED COLOUR BIRD ORNAMENT",
-        "WHITE HANGING HEART T-LIGHT HOLDER",
-        "PACK OF 72 RETROSPOT CAKE CASES",
-        "MINI PAINT SET VINTAGE",
-        "POPCORN HOLDER",
-        "PACK OF 60 PINK POLKADOT CAKE CASES",
-        "BROCADE RING PURSE",
-        "PACK OF 12 LONDON TISSUES"
-    ]
-    quantities = [53847, 47363, 36381, 35382, 33682, 26490, 26390, 26150, 23050, 21950]
-    revenue = [102540.30, 98642.10, 58450.20, 106140.60, 18540.20, 12540.30, 22450.40, 14350.20, 11520.10, 8950.40]
-    return pd.DataFrame({
-        "Product": products,
-        "Quantity": quantities,
-        "Total_Sales": revenue
-    })
+# --- AGREGASI DINAMIS (Menggantikan Mock SQL) ---
+if not df_filtered.empty:
+    df_sql = df_filtered.groupby("MonthStr")["TotalAmount"].sum().reset_index().rename(columns={"MonthStr": "Month", "TotalAmount": "Total_Sales"})
+    
+    df_dow = df_filtered.groupby("DayOfWeek").agg({"TotalAmount": "sum", "InvoiceNo": "nunique"}).reset_index()
+    df_dow = df_dow.rename(columns={"DayOfWeek": "Day", "TotalAmount": "Total_Sales", "InvoiceNo": "Transactions"})
+    
+    df_hourly = df_filtered.groupby("Hour").agg({"TotalAmount": "sum", "InvoiceNo": "nunique"}).reset_index()
+    df_hourly = df_hourly.rename(columns={"TotalAmount": "Total_Sales", "InvoiceNo": "Transactions"})
+    df_hourly["Hour"] = df_hourly["Hour"].apply(lambda x: f"{int(x):02d}:00")
+    df_hourly = df_hourly.sort_values(by="Hour")
+    
+    df_geo = df_filtered.groupby("Country")["TotalAmount"].sum().reset_index().rename(columns={"TotalAmount": "Total_Sales"})
+    
+    df_products = df_filtered.groupby("Description").agg({"Quantity": "sum", "TotalAmount": "sum"}).reset_index()
+    df_products = df_products.rename(columns={"Description": "Product", "TotalAmount": "Total_Sales"})
+else:
+    df_sql = pd.DataFrame({"Month": [], "Total_Sales": []})
+    df_dow = pd.DataFrame({"Day": [], "Total_Sales": [], "Transactions": []})
+    df_hourly = pd.DataFrame({"Hour": [], "Total_Sales": [], "Transactions": []})
+    df_geo = pd.DataFrame({"Country": [], "Total_Sales": []})
+    df_products = pd.DataFrame({"Product": [], "Quantity": [], "Total_Sales": []})
 
-# Load data
+# Load Mongo data (NoSQL)
 if "mongo_error" not in st.session_state:
     st.session_state["mongo_error"] = None
 
 df_mongo = get_mongo_data()
-df_sql = get_postgres_data()
 
 is_mock_loaded = False
 if df_mongo.empty:
@@ -231,23 +227,19 @@ else:
     st.markdown("---")
 
     # Main Analysis Area
-    tab1, tab2, tab3 = st.tabs(["📈 Tren Penjualan (SQL)", "👥 Segmentasi (NoSQL)", "🔗 Integrasi Lintas Sistem"])
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Tren Penjualan (SQL)", "👥 Segmentasi (NoSQL)", "🔗 Integrasi Lintas Sistem", "🗓️ Analisis Kohort", "💡 Ringkasan Insight"])
 
     with tab1:
         st.subheader("Tren Penjualan & Analisis Operasional (SQL)")
         st.write("Data agregat dianalisis menggunakan Apache Spark dan disimpan di database PostgreSQL (Supabase).")
         
-        # Load additional PostgreSQL tables
-        df_dow = get_day_of_week_sales()
-        df_hourly = get_hourly_sales()
-        df_geo = get_geographic_sales()
-        df_products = get_top_products_sales()
+        # Load additional PostgreSQL tables (Kini menggunakan df_dow, df_hourly, dll yang sudah diagregasi dinamis)
         
         # KPI Cards for Tab 1
         col_t1, col_t2, col_t3 = st.columns(3)
         total_revenue = df_sql["Total_Sales"].sum()
         total_invoices = df_dow["Transactions"].sum()
-        total_items_sold = 4820314  # Total riil dari dataset online_retail.csv yang dibersihkan
+        total_items_sold = int(df_filtered["Quantity"].sum()) if not df_filtered.empty else 0
         
         with col_t1:
             st.metric("Total Revenue (All Time)", f"£{total_revenue:,.2f}")
@@ -403,9 +395,10 @@ else:
         st.subheader("Distribusi & Analisis Karakteristik Segmen")
         st.write("Data ini bersumber dari koleksi `customer_segments` di MongoDB Atlas.")
         
-        st.write("### 👥 Distribusi & Karakteristik Segmen")
-        
-        c1, c2 = st.columns([1, 1])
+        with st.spinner("Memproses grafik segmentasi... Mohon tunggu sebentar."):
+            st.write("### 👥 Distribusi & Karakteristik Segmen")
+            
+            c1, c2 = st.columns([1, 1])
         with c1:
             st.write("#### Proporsi Jumlah Pelanggan (Donut Chart)")
             fig_pie, ax_pie = plt.subplots(figsize=(6, 5))
@@ -585,6 +578,272 @@ else:
         ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'£{x*1e-3:.0f}k' if x >= 1000 else f'£{x:.0f}'))
         plt.tight_layout()
         st.pyplot(fig2)
+
+    with tab4:
+        st.subheader("Analisis Kohort (Customer Retention Rate)")
+        st.write("Visualisasi Heatmap ini mengukur seberapa loyal pelanggan dari waktu ke waktu berdasarkan bulan transaksi pertama mereka.")
+        
+        if not df_filtered.empty:
+            df_cohort = df_filtered.copy()
+            # Buat representasi bulan
+            df_cohort['InvoiceMonth'] = df_cohort['InvoiceDate'].dt.to_period('M')
+            df_cohort['CohortMonth'] = df_cohort.groupby('CustomerID')['InvoiceDate'].transform('min').dt.to_period('M')
+            
+            def get_date_int(df, column):
+                year = df[column].dt.year
+                month = df[column].dt.month
+                return year, month
+            
+            invoice_year, invoice_month = get_date_int(df_cohort, 'InvoiceMonth')
+            cohort_year, cohort_month = get_date_int(df_cohort, 'CohortMonth')
+            
+            years_diff = invoice_year - cohort_year
+            months_diff = invoice_month - cohort_month
+            df_cohort['CohortIndex'] = years_diff * 12 + months_diff + 1
+            
+            cohort_data = df_cohort.groupby(['CohortMonth', 'CohortIndex'])['CustomerID'].apply(pd.Series.nunique).reset_index()
+            cohort_counts = cohort_data.pivot(index='CohortMonth', columns='CohortIndex', values='CustomerID')
+            
+            cohort_sizes = cohort_counts.iloc[:, 0]
+            retention = cohort_counts.divide(cohort_sizes, axis=0)
+            retention.index = retention.index.astype(str)
+            
+            fig_cohort, ax_cohort = plt.subplots(figsize=(10, 6))
+            sns.heatmap(retention, annot=True, fmt='.0%', cmap='YlGnBu', vmin=0.0, vmax=0.5, ax=ax_cohort)
+            ax_cohort.set_title("Retention Rate per Kohort Bulanan", fontsize=12, fontweight='bold', color='#1e3a8a')
+            ax_cohort.set_ylabel("Bulan Kohort (Transaksi Pertama)")
+            ax_cohort.set_xlabel("Bulan ke- (Cohort Index)")
+            plt.tight_layout()
+            st.pyplot(fig_cohort)
+        else:
+            st.warning("Data tidak tersedia untuk filter yang dipilih.")
+
+    with tab5:
+        st.subheader("💡 Ringkasan Eksekutif & Insight Utama")
+        st.write("Bagian ini merangkum penemuan paling bernilai (*actionable insights*) dari data transaksi dan segmentasi pelanggan yang dianalisis menggunakan *Big Data*.")
+        
+        with st.spinner("Membuat rangkuman insight cerdas dari data gabungan..."):
+            if not df_filtered.empty and not df_mongo.empty:
+                # Aggregate filtered data by CustomerID
+                df_cust_sales = df_filtered.groupby("CustomerID").agg({"TotalAmount": "sum", "InvoiceNo": "nunique"}).reset_index()
+                
+                # Merge with MongoDB segmentation
+                df_mongo_str_id = df_mongo.copy()
+                
+                # Standarisasi format ID: konversi ke float lalu int lalu string (menghapus '.0' yang berasal dari Spark)
+                df_mongo_str_id["CustomerID"] = df_mongo_str_id["CustomerID"].astype(float).astype(int).astype(str)
+                df_cust_sales["CustomerID"] = df_cust_sales["CustomerID"].astype(float).astype(int).astype(str)
+                
+                df_insight = pd.merge(df_cust_sales, df_mongo_str_id, on="CustomerID", how="inner")
+                
+                if not df_insight.empty:
+                    # Insight 1: Pareto Principle
+                    st.markdown("### 🥇 1. Hukum Pareto (80/20 Rule) Berlaku Kuat pada Segmen Bisnis Ini")
+                    st.info("**Insight:** Kelompok pelanggan dengan segmen teratas menyumbangkan **mayoritas absolut** dari total pendapatan perusahaan. Oleh karena itu, *budget* promosi dan layanan *customer care* harus difokuskan mati-matian pada retensi segmen VIP/Champions ini.")
+                    
+                    pareto_data = df_insight.groupby("Segment")["TotalAmount"].sum().sort_values(ascending=False).reset_index()
+                    pareto_data["CumulativePercentage"] = (pareto_data["TotalAmount"].cumsum() / pareto_data["TotalAmount"].sum()) * 100
+                    
+                    fig_pareto, ax1 = plt.subplots(figsize=(10, 4.5))
+                    ax1.bar(pareto_data["Segment"], pareto_data["TotalAmount"], color="#3b82f6", alpha=0.85)
+                    ax1.set_ylabel("Total Pendapatan (£)", color="#1e3a8a", fontweight='bold')
+                    import matplotlib.ticker as ticker
+                    ax1.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'£{x*1e-3:.0f}k' if x >= 1000 else f'£{x:.0f}'))
+                    
+                    ax2 = ax1.twinx()
+                    ax2.plot(pareto_data["Segment"], pareto_data["CumulativePercentage"], color="#ef4444", marker="D", linewidth=3, markersize=8)
+                    ax2.set_ylabel("Persentase Kumulatif (%)", color="#ef4444", fontweight='bold')
+                    ax2.set_ylim(0, 110)
+                    
+                    for i, txt in enumerate(pareto_data["CumulativePercentage"]):
+                        ax2.annotate(f"{txt:.1f}%", (pareto_data["Segment"][i], pareto_data["CumulativePercentage"][i]), 
+                                     textcoords="offset points", xytext=(0,10), ha='center', color="#b91c1c", fontweight="bold")
+                    
+                    plt.title("Bukti Visual: Pendapatan per Segmen & Garis Persentase Kumulatif", fontweight="bold", color="#1e3a8a")
+                    st.pyplot(fig_pareto)
+                    
+                    st.write("---")
+                    
+                    # Insight 2: Basket Size per Day
+                    st.markdown("### 🛒 2. Perilaku Belanja Mingguan: 'Basket Size' Tertinggi")
+                    st.info("**Insight:** Di menu 'Tren Penjualan', kita melihat bahwa hari **Kamis (Thursday)** mencetak volume transaksi paling banyak. Namun, jika kita telusuri ukuran keranjang per transaksi (*Basket Size*), perilaku pelanggan mungkin berbeda! Hari dengan *Basket Size* tinggi adalah waktu terbaik untuk menaruh iklan produk premium.")
+                    
+                    basket_size = df_filtered.groupby("DayOfWeek").agg({"TotalAmount": "sum", "InvoiceNo": "nunique"}).reset_index()
+                    basket_size["AvgBasketSize"] = basket_size["TotalAmount"] / basket_size["InvoiceNo"]
+                    day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Sunday"]
+                    basket_size = basket_size.set_index("DayOfWeek").reindex(day_order).dropna().reset_index()
+                    
+                    fig_basket, ax_basket = plt.subplots(figsize=(10, 4.5))
+                    sns.barplot(data=basket_size, x="DayOfWeek", y="AvgBasketSize", palette="magma", ax=ax_basket)
+                    for p in ax_basket.patches:
+                        ax_basket.annotate(f"£{p.get_height():.0f}", (p.get_x() + p.get_width() / 2., p.get_height()), 
+                                           ha='center', va='center', xytext=(0, 8), textcoords='offset points', fontweight='bold')
+                    ax_basket.set_title("Bukti Visual: Rata-rata Nilai Belanja per Transaksi (Basket Size)", fontweight="bold", color="#1e3a8a")
+                    ax_basket.set_ylabel("Avg Basket Size (£)")
+                    ax_basket.set_xlabel("Hari Transaksi")
+                    st.pyplot(fig_basket)
+                    
+                    st.write("---")
+                    
+                    # Insight 3: High Value Churn Risk
+                    st.markdown("### ⚠️ 3. Risiko Kehilangan Pelanggan Bernilai Tinggi (High-Value Churn Risk)")
+                    st.error("**Insight:** Terdapat sejumlah pelanggan yang secara historis berbelanja dalam jumlah amat besar (*Monetary* tinggi), namun mereka **sudah berbulan-bulan tidak kembali** (*Recency* sangat buruk). Mereka ini adalah target paling mendesak untuk kampanye retensi eksklusif (*Win-back Campaign*).")
+                    
+                    fig_risk, ax_risk = plt.subplots(figsize=(10, 5))
+                    high_monetary_threshold = df_insight["Monetary"].quantile(0.75) # Top 25% spender
+                    
+                    df_insight["RiskStatus"] = "Aman / Belanja Kecil"
+                    df_insight.loc[(df_insight["Recency"] > 90) & (df_insight["Monetary"] > high_monetary_threshold), "RiskStatus"] = "⚠️ MANTAN VIP (Risiko Tinggi Hilang)"
+                    df_insight.loc[(df_insight["Recency"] > 90) & (df_insight["Monetary"] <= high_monetary_threshold), "RiskStatus"] = "Churn Biasa"
+                    df_insight.loc[(df_insight["Recency"] <= 90) & (df_insight["Monetary"] > high_monetary_threshold), "RiskStatus"] = "VIP Aktif"
+                    
+                    sns.scatterplot(
+                        data=df_insight, 
+                        x="Recency", 
+                        y="Monetary", 
+                        hue="RiskStatus", 
+                        palette={"VIP Aktif": "#10b981", "⚠️ MANTAN VIP (Risiko Tinggi Hilang)": "#ef4444", "Churn Biasa": "#94a3b8", "Aman / Belanja Kecil": "#6ee7b7"},
+                        alpha=0.8,
+                        s=60,
+                        edgecolor="w",
+                        ax=ax_risk
+                    )
+                    ax_risk.set_title("Bukti Visual: Pemetaan Risiko Churn Pelanggan VIP", fontweight="bold", color="#1e3a8a")
+                    ax_risk.set_xlabel("Recency (Semakin ke kanan = Semakin lama tidak belanja)")
+                    ax_risk.set_ylabel("Monetary (Total Belanja £)")
+                    ax_risk.axvline(x=90, color="red", linestyle="--", alpha=0.5, label="Batas Bahaya (90 Hari)")
+                    ax_risk.axhline(y=high_monetary_threshold, color="blue", linestyle="--", alpha=0.5, label=f"Batas VIP (£{high_monetary_threshold:.0f})")
+                    ax_risk.legend(loc='upper right')
+                    
+                    # Potong axis Y yang terlalu ekstrem agar plot lebih bisa dibaca
+                    ax_risk.set_ylim(-10, df_insight["Monetary"].quantile(0.98))
+                    st.pyplot(fig_risk)
+                    
+                    # --- INSIGHT 4: HOURLY BASKET SIZE ---
+                    st.write("---")
+                    st.markdown("### 🕒 4. Perilaku Belanja Berdasarkan Jam (*Hourly Basket Size*)")
+                    st.info("**Insight:** Jam sibuk (volume transaksi tinggi) tidak selalu berarti nilai keranjangnya (*Basket Size*) juga tinggi. Memahami jam berapa pelanggan besar (*High Rollers*) bertransaksi dapat membantu penentuan waktu ideal untuk mengirimkan *email marketing* atau *flash sale* premium.")
+                    
+                    hourly_basket = df_filtered.groupby("Hour").agg({"TotalAmount": "sum", "InvoiceNo": "nunique"}).reset_index()
+                    hourly_basket["AvgBasketSize"] = hourly_basket["TotalAmount"] / hourly_basket["InvoiceNo"]
+                    
+                    fig_hour, ax_hour = plt.subplots(figsize=(10, 4.5))
+                    sns.lineplot(data=hourly_basket, x="Hour", y="AvgBasketSize", marker="o", linewidth=3, color="#8b5cf6", ax=ax_hour)
+                    ax_hour.set_title("Bukti Visual: Rata-rata Ukuran Keranjang per Jam Transaksi", fontweight="bold", color="#1e3a8a")
+                    ax_hour.set_xlabel("Jam (Format 24H)")
+                    ax_hour.set_ylabel("Avg Basket Size (£)")
+                    ax_hour.set_xticks(range(6, 22))
+                    ax_hour.grid(True, linestyle="--", alpha=0.3)
+                    st.pyplot(fig_hour)
+                    
+                    # --- INSIGHT 5: TOP PRODUCTS BY VIP ---
+                    st.write("---")
+                    st.markdown("### 💎 5. Preferensi Produk Eksklusif Segmen VIP")
+                    st.info("**Insight:** Pelanggan dengan nilai tertinggi (VIP/Champions) seringkali membeli kombinasi produk yang berbeda dibanding pelanggan biasa. Data produk spesifik ini vital untuk diprioritaskan di algoritma rekomendasi beranda (Halaman Depan) khusus pelanggan VIP.")
+                    
+                    # Cari nama segmen dengan rata-rata Monetary tertinggi
+                    vip_segment = df_insight.groupby("Segment")["Monetary"].mean().idxmax()
+                    vip_customers = df_insight[df_insight["Segment"] == vip_segment]["CustomerID"].astype(str).tolist()
+                    
+                    df_vip_sales = df_filtered[df_filtered["CustomerID"].astype(float).astype(int).astype(str).isin(vip_customers)]
+                    top_vip_prod = df_vip_sales.groupby("Description")["TotalAmount"].sum().sort_values(ascending=False).head(5).reset_index()
+                    
+                    fig_vip, ax_vip = plt.subplots(figsize=(10, 4))
+                    sns.barplot(data=top_vip_prod, y="Description", x="TotalAmount", palette="viridis", ax=ax_vip)
+                    ax_vip.set_title(f"Bukti Visual: 5 Produk Penghasil Pendapatan Terbesar untuk Segmen '{vip_segment}'", fontweight="bold", color="#1e3a8a")
+                    ax_vip.set_xlabel("Total Pendapatan (£)")
+                    ax_vip.set_ylabel("")
+                    st.pyplot(fig_vip)
+
+                    # --- INSIGHT 6: LOYALTY EFFECT ---
+                    st.write("---")
+                    st.markdown("### 📈 6. Efek Loyalitas: Frekuensi Kunjungan vs Rata-rata Belanja")
+                    st.info("**Insight:** Ada pertanyaan mendasar: apakah pelanggan yang sering datang (Frekuensi tinggi) cenderung belanja lebih sedikit per kunjungan, atau malah membesar? Bukti di bawah menunjukkan korelasi antara total kunjungan dan nilai rata-rata tiap kunjungannya.")
+                    
+                    df_insight["AvgMonetaryPerInvoice"] = df_insight["Monetary"] / df_insight["Frequency"]
+                    fig_loyalty, ax_loyalty = plt.subplots(figsize=(10, 4.5))
+                    sns.regplot(data=df_insight, x="Frequency", y="AvgMonetaryPerInvoice", scatter_kws={'alpha':0.4, 'color': '#0ea5e9'}, line_kws={'color': 'red'}, ax=ax_loyalty)
+                    ax_loyalty.set_title("Bukti Visual: Korelasi Frekuensi Belanja & Pengeluaran per Kunjungan", fontweight="bold", color="#1e3a8a")
+                    ax_loyalty.set_xlim(0, df_insight["Frequency"].quantile(0.99))
+                    ax_loyalty.set_ylim(0, df_insight["AvgMonetaryPerInvoice"].quantile(0.99))
+                    ax_loyalty.set_xlabel("Frequency (Total Kunjungan)")
+                    ax_loyalty.set_ylabel("Rata-rata Belanja per Kunjungan (£)")
+                    st.pyplot(fig_loyalty)
+
+                    # --- INSIGHT 7: GEO VIP CONCENTRATION ---
+                    st.write("---")
+                    st.markdown("### 🌍 7. Konsentrasi Pelanggan VIP Berdasarkan Negara")
+                    st.info("**Insight:** Ekspansi internasional membutuhkan fokus. Dengan melihat rasio segmen pelanggan di 10 negara teratas, kita bisa mengetahui negara mana yang memiliki *persentase* pelanggan VIP terbesar (bukan sekadar total pendapatan).")
+                    
+                    df_cust_country = df_filtered.groupby("CustomerID")["Country"].first().reset_index()
+                    df_cust_country["CustomerID"] = df_cust_country["CustomerID"].astype(float).astype(int).astype(str)
+                    df_insight_geo = pd.merge(df_insight, df_cust_country, on="CustomerID", how="inner")
+                    
+                    top_countries = df_insight_geo["Country"].value_counts().head(10).index
+                    df_geo_filtered = df_insight_geo[df_insight_geo["Country"].isin(top_countries)]
+                    geo_seg = pd.crosstab(df_geo_filtered["Country"], df_geo_filtered["Segment"], normalize='index') * 100
+                    geo_seg = geo_seg.reindex(df_geo_filtered["Country"].value_counts().index)
+                    
+                    fig_geo_stack, ax_geo_stack = plt.subplots(figsize=(10, 5))
+                    geo_seg.plot(kind='bar', stacked=True, ax=ax_geo_stack, colormap='Set2', edgecolor='white')
+                    ax_geo_stack.set_title("Bukti Visual: Proporsi Segmen Pelanggan di 10 Negara Utama", fontweight="bold", color="#1e3a8a")
+                    ax_geo_stack.set_xlabel("Negara")
+                    ax_geo_stack.set_ylabel("Persentase (%)")
+                    ax_geo_stack.legend(title="Segmen", bbox_to_anchor=(1.05, 1), loc='upper left')
+                    plt.tight_layout()
+                    st.pyplot(fig_geo_stack)
+
+                    # --- INSIGHT 8: COHORT LTV ---
+                    st.write("---")
+                    st.markdown("### ⏳ 8. Nilai Jangka Panjang Pelanggan (*Customer Lifetime Value* / LTV)")
+                    st.info("**Insight:** Pelanggan yang bergabung lebih awal biasanya memiliki akumulasi nilai uang (*Monetary*) seumur hidup yang lebih besar. Grafik ini memvalidasi kekuatan *Retention* (Retensi) dalam menghasilkan LTV tinggi bagi bisnis.")
+                    
+                    df_filtered_ltv = df_filtered.copy()
+                    df_filtered_ltv['CohortMonth'] = df_filtered_ltv.groupby('CustomerID')['InvoiceDate'].transform('min').dt.to_period('M')
+                    cohort_ltv = df_filtered_ltv.groupby(['CohortMonth', 'CustomerID'])['TotalAmount'].sum().reset_index()
+                    cohort_avg_ltv = cohort_ltv.groupby('CohortMonth')['TotalAmount'].mean().reset_index()
+                    cohort_avg_ltv['CohortMonth'] = cohort_avg_ltv['CohortMonth'].astype(str)
+                    
+                    fig_ltv, ax_ltv = plt.subplots(figsize=(10, 4.5))
+                    sns.barplot(data=cohort_avg_ltv, x="CohortMonth", y="TotalAmount", color="#f59e0b", ax=ax_ltv)
+                    ax_ltv.set_title("Bukti Visual: Rata-rata Akumulasi Nilai Belanja (LTV) Berdasarkan Bulan Kohort", fontweight="bold", color="#1e3a8a")
+                    ax_ltv.set_xlabel("Bulan Bergabung (Kohort)")
+                    ax_ltv.set_ylabel("Avg Lifetime Value (£)")
+                    plt.xticks(rotation=45)
+                    st.pyplot(fig_ltv)
+
+                    # --- INSIGHT 9: GROSIR VS ECERAN ---
+                    st.write("---")
+                    st.markdown("### 🏷️ 9. Perilaku Harga vs Kuantitas (Eceran vs Grosir B2B)")
+                    st.info("**Insight:** Apakah penjualan lebih didominasi oleh barang mahal dalam jumlah sedikit (Eceran Premium) atau barang murah dalam jumlah sangat masif (Grosir/B2B)? Skala logaritmik membuktikan *clustering* perilaku tersebut untuk strategi *pricing*.")
+                    
+                    fig_price, ax_price = plt.subplots(figsize=(10, 4.5))
+                    sns.scatterplot(data=df_filtered, x="UnitPrice", y="Quantity", alpha=0.1, color="#14b8a6", ax=ax_price)
+                    ax_price.set_title("Bukti Visual: Scatter Plot Harga Satuan vs Kuantitas Dibeli", fontweight="bold", color="#1e3a8a")
+                    ax_price.set_xscale("log")
+                    ax_price.set_yscale("log")
+                    ax_price.set_xlabel("Unit Price (£) - Log Scale")
+                    ax_price.set_ylabel("Quantity - Log Scale")
+                    st.pyplot(fig_price)
+
+                    # --- INSIGHT 10: REPEAT PURCHASE RATE ---
+                    st.write("---")
+                    st.markdown("### 🔄 10. Indikator Kecocokan Pasar (*Repeat Purchase Rate*)")
+                    st.info("**Insight:** Pelanggan yang melakukan lebih dari 1 transaksi (*Repeat Purchasers*) adalah tulang punggung keberlanjutan bisnis. Persentase ini menunjukkan tingkat kecocokan produk terhadap pasar (*Product-Market Fit*).")
+                    
+                    repeat_cust = (df_insight["Frequency"] > 1).sum()
+                    one_time_cust = (df_insight["Frequency"] == 1).sum()
+                    
+                    fig_repeat, ax_repeat = plt.subplots(figsize=(6, 5))
+                    ax_repeat.pie([repeat_cust, one_time_cust], labels=["Repeat Purchasers (>1 Transaksi)", "One-Time Buyers (1 Transaksi)"], 
+                                  autopct='%1.1f%%', colors=["#10b981", "#f43f5e"], startangle=90, textprops={'fontweight': 'bold'})
+                    ax_repeat.set_title("Bukti Visual: Proporsi Pelanggan Berulang vs Sekali Beli", fontweight="bold", color="#1e3a8a")
+                    st.pyplot(fig_repeat)
+                    
+                else:
+                    st.warning("Tidak dapat menggabungkan data transaksi dan data pelanggan untuk mengekstrak insight.")
+            else:
+                st.warning("Data belum tersedia sepenuhnya untuk menarik insight gabungan.")
 
 st.markdown("---")
 st.caption("Proyek Akhir Big Data - Integrasi Spark, Postgres, dan MongoDB.")
