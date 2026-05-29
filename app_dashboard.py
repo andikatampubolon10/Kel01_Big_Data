@@ -104,6 +104,13 @@ def generate_mock_mongo_data():
 
 # --- DATA RAW UNTUK FILTER DINAMIS ---
 @st.cache_data
+def load_uncleaned_data():
+    try:
+        return pd.read_csv("dataset/online_retail.csv", encoding="ISO-8859-1")
+    except Exception:
+        return pd.DataFrame()
+
+@st.cache_data
 def load_raw_data():
     try:
         # Gunakan encoding ISO-8859-1 karena file retail umumnya memiliki karakter khusus
@@ -227,7 +234,82 @@ else:
     st.markdown("---")
 
     # Main Analysis Area
-    tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Tren Penjualan (SQL)", "👥 Segmentasi (NoSQL)", "🔗 Integrasi Lintas Sistem", "🗓️ Analisis Kohort", "💡 Ringkasan Insight"])
+    tab_eda, tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 Exploratory Data Analysis", "📈 Tren Penjualan (SQL)", "👥 Segmentasi (NoSQL)", "🔗 Integrasi Lintas Sistem", "🗓️ Analisis Kohort", "💡 Ringkasan Insight"])
+
+    with tab_eda:
+        st.subheader("🔍 Exploratory Data Analysis (EDA)")
+        st.write("Analisis awal untuk memahami struktur data mentah (sebelum *cleaning*) dibandingkan dengan data bersih (setelah *cleaning*).")
+        
+        df_uncleaned = load_uncleaned_data()
+        
+        if not df_uncleaned.empty:
+            st.markdown("### 1. Komparasi Volume Data")
+            col_eda1, col_eda2, col_eda3 = st.columns(3)
+            with col_eda1:
+                st.metric("Total Baris (Sebelum Cleaning)", f"{len(df_uncleaned):,}")
+            with col_eda2:
+                st.metric("Total Baris (Setelah Cleaning)", f"{len(df_raw):,}")
+            with col_eda3:
+                st.metric("Baris Dihapus (Anomali/Null)", f"{len(df_uncleaned) - len(df_raw):,}")
+                
+            st.markdown("### 2. Analisis Missing Values (Sebelum Cleaning)")
+            st.write("Salah satu langkah wajib sebelum *machine learning* adalah menangani *missing values*. Grafik ini menunjukkan persentase data kosong pada dataset asli.")
+            missing_data = df_uncleaned.isnull().sum().reset_index()
+            missing_data.columns = ['Kolom', 'Jumlah Missing']
+            missing_data['Persentase'] = (missing_data['Jumlah Missing'] / len(df_uncleaned) * 100).round(2)
+            
+            fig_miss, ax_miss = plt.subplots(figsize=(10, 4.5))
+            sns.barplot(data=missing_data, x='Kolom', y='Persentase', palette='Reds', ax=ax_miss)
+            ax_miss.set_title("Persentase Missing Values per Kolom", fontweight="bold", color="#1e3a8a")
+            ax_miss.set_ylabel("Persentase (%)")
+            plt.xticks(rotation=45)
+            for p in ax_miss.patches:
+                if p.get_height() > 0:
+                    ax_miss.annotate(f"{p.get_height():.1f}%", (p.get_x() + p.get_width() / 2., p.get_height()), 
+                                   ha='center', va='bottom', fontsize=9, fontweight='bold', xytext=(0, 3), textcoords='offset points')
+            st.pyplot(fig_miss)
+            
+            st.write("---")
+            st.markdown("### 3. Analisis Transaksi Dibatalkan (Returns/Cancellations)")
+            
+            # Ubah tipe InvoiceNo menjadi string dulu untuk pencegahan error
+            df_uncleaned['InvoiceNo'] = df_uncleaned['InvoiceNo'].astype(str)
+            cancellations = df_uncleaned[df_uncleaned['InvoiceNo'].str.startswith('C')]
+            
+            st.info(f"Terdapat **{len(cancellations):,}** transaksi yang dibatalkan (Invoice diawali huruf 'C'). Transaksi ini disaring pada tahap *cleaning* agar kalkulasi pendapatan menjadi representatif (penjualan bersih).")
+            
+            c_col1, c_col2 = st.columns([1, 1.5])
+            with c_col1:
+                fig_cancel, ax_cancel = plt.subplots(figsize=(5, 4))
+                ax_cancel.pie([len(df_uncleaned)-len(cancellations), len(cancellations)], 
+                              labels=['Sukses', 'Dibatalkan/Retur'], autopct='%1.1f%%', 
+                              colors=['#10b981', '#ef4444'], startangle=90, textprops={'fontweight': 'bold'})
+                ax_cancel.set_title("Proporsi Status Transaksi (Mentah)", fontweight="bold", color="#1e3a8a")
+                st.pyplot(fig_cancel)
+                
+            with c_col2:
+                st.write("#### Top 5 Produk Paling Sering Diretur:")
+                if not cancellations.empty:
+                    top_returns = cancellations['Description'].value_counts().head(5).reset_index()
+                    top_returns.columns = ['Produk', 'Jumlah Retur']
+                    st.dataframe(top_returns, use_container_width=True)
+                
+            st.write("---")
+            st.markdown("### 4. Ringkasan Statistik Data Numerik (Data Bersih)")
+            st.write("Memeriksa nilai *mean*, *min*, *max* untuk memastikan tidak ada anomali kuantitas atau harga satuan negatif/nol pada data yang akan dimodelkan.")
+            st.dataframe(df_raw[['Quantity', 'UnitPrice', 'TotalAmount']].describe().T.round(2), use_container_width=True)
+            
+            st.write("---")
+            st.markdown("### 5. Inspeksi Data: Mentah vs Bersih")
+            samp_col1, samp_col2 = st.columns(2)
+            with samp_col1:
+                st.write("**Data Mentah (Mungkin mengandung NaN atau Retur):**")
+                st.dataframe(df_uncleaned.head(10))
+            with samp_col2:
+                st.write("**Data Bersih (Siap untuk RFM & K-Means):**")
+                st.dataframe(df_raw.head(10))
+        else:
+            st.warning("Data mentah tidak dapat dimuat untuk EDA.")
 
     with tab1:
         st.subheader("Tren Penjualan & Analisis Operasional (SQL)")
@@ -318,7 +400,7 @@ else:
             st.write("#### 🏆 Top 10 Produk Terlaris (Top Selling Products)")
             fig_prod, ax_prod = plt.subplots(figsize=(6, 5))
             
-            df_prod_sorted = df_products.sort_values(by="Quantity", ascending=True)
+            df_prod_sorted = df_products.sort_values(by="Quantity", ascending=False).head(10).sort_values(by="Quantity", ascending=True)
             short_names = [p[:25] + "..." if len(p) > 25 else p for p in df_prod_sorted["Product"]]
             
             bars_prod = ax_prod.barh(short_names, df_prod_sorted["Quantity"], color="#10b981", alpha=0.8)
@@ -368,7 +450,7 @@ else:
             st.write("#### Top 10 Pasar Internasional Terbesar (Excluding UK)")
             fig_geo_bar, ax_geo_bar = plt.subplots(figsize=(6, 5))
             
-            df_geo_intl = df_geo[df_geo["Country"] != "United Kingdom"].sort_values(by="Total_Sales", ascending=True)
+            df_geo_intl = df_geo[df_geo["Country"] != "United Kingdom"].sort_values(by="Total_Sales", ascending=False).head(10).sort_values(by="Total_Sales", ascending=True)
             
             bars_geo = ax_geo_bar.barh(df_geo_intl["Country"], df_geo_intl["Total_Sales"], color="#f59e0b", alpha=0.85)
             
