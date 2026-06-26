@@ -545,6 +545,51 @@ else:
             else:
                 st.info("Data internasional kosong pada filter terpilih.")
             
+        st.write("---")
+        st.write("### 🚫 4. Analisis Pembatalan Transaksi (Cancel/Return) per Segmen")
+        st.write("Menganalisis segmen pelanggan mana yang paling sering melakukan pembatalan atau pengembalian barang.")
+        
+        df_uncleaned_tab1 = load_uncleaned_data()
+        if not df_uncleaned_tab1.empty and not df_mongo.empty:
+            df_uncleaned_tab1['InvoiceNo'] = df_uncleaned_tab1['InvoiceNo'].astype(str)
+            cancellations_tab1 = df_uncleaned_tab1[df_uncleaned_tab1['InvoiceNo'].str.startswith('C')].copy()
+            
+            if not cancellations_tab1.empty:
+                # Merge dengan data cluster
+                # Sesuaikan tipe data CustomerID
+                cancellations_tab1 = cancellations_tab1.dropna(subset=['CustomerID'])
+                cancellations_tab1['CustomerID'] = cancellations_tab1['CustomerID'].astype(float).astype(int).astype(str)
+                df_mongo_copy = df_mongo.copy()
+                df_mongo_copy['CustomerID'] = df_mongo_copy['CustomerID'].astype(float).astype(int).astype(str)
+                
+                cancel_merged = pd.merge(cancellations_tab1, df_mongo_copy[['CustomerID', 'Segment', 'Cluster']], on='CustomerID', how='inner')
+                
+                if not cancel_merged.empty:
+                    # Agregasi jumlah cancel per segment
+                    cancel_by_segment = cancel_merged.groupby('Segment')['InvoiceNo'].nunique().reset_index()
+                    cancel_by_segment.columns = ['Segmen', 'Jumlah Pembatalan (Transaksi)']
+                    cancel_by_segment = cancel_by_segment.sort_values(by='Jumlah Pembatalan (Transaksi)', ascending=False)
+                    
+                    c_cancel1, c_cancel2 = st.columns([1, 1.2])
+                    with c_cancel1:
+                        st.dataframe(cancel_by_segment, use_container_width=True)
+                        
+                    with c_cancel2:
+                        fig_cancel_seg, ax_cancel_seg = plt.subplots(figsize=(6, 4))
+                        import seaborn as sns
+                        sns.barplot(data=cancel_by_segment, x='Jumlah Pembatalan (Transaksi)', y='Segmen', palette='Reds_r', ax=ax_cancel_seg)
+                        ax_cancel_seg.set_title("Jumlah Pembatalan per Segmen", fontweight='bold', color='#1e3a8a')
+                        ax_cancel_seg.set_xlabel("Jumlah Transaksi Cancel")
+                        ax_cancel_seg.set_ylabel("")
+                        plt.tight_layout()
+                        st.pyplot(fig_cancel_seg)
+                else:
+                    st.info("Tidak ada data pembatalan yang cocok dengan pelanggan pada segmen saat ini.")
+            else:
+                st.info("Tidak ada transaksi yang dibatalkan.")
+        else:
+            st.info("Data mentah atau data segmen tidak tersedia.")
+            
         with st.expander("Lihat Data Mentah SQL (Tren Bulanan)"):
             st.dataframe(df_sql)
 
