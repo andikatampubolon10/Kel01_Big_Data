@@ -5,6 +5,9 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from pymongo import MongoClient
 from dotenv import load_dotenv
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score, davies_bouldin_score, calinski_harabasz_score
 
 # Load environment variables
 load_dotenv()
@@ -274,7 +277,7 @@ else:
             
             # Ubah tipe InvoiceNo menjadi string dulu untuk pencegahan error
             df_uncleaned['InvoiceNo'] = df_uncleaned['InvoiceNo'].astype(str)
-            cancellations = df_uncleaned[df_uncleaned['InvoiceNo'].str.startswith('C')]
+            cancellations = df_uncleaned[df_uncleaned['InvoiceNo'].str.startswith('C')].copy()
             
             st.info(f"Terdapat **{len(cancellations):,}** transaksi yang dibatalkan (Invoice diawali huruf 'C'). Transaksi ini disaring pada tahap *cleaning* agar kalkulasi pendapatan menjadi representatif (penjualan bersih).")
             
@@ -293,6 +296,20 @@ else:
                     top_returns = cancellations['Description'].value_counts().head(5).reset_index()
                     top_returns.columns = ['Produk', 'Jumlah Retur']
                     st.dataframe(top_returns, use_container_width=True)
+            
+            st.write("#### 📉 Tren Pembatalan Transaksi Berdasarkan Waktu (Bulanan)")
+            if not cancellations.empty:
+                cancellations['InvoiceDate'] = pd.to_datetime(cancellations['InvoiceDate'], errors='coerce')
+                cancellations['MonthStr'] = cancellations['InvoiceDate'].dt.strftime('%Y-%m')
+                cancel_trend = cancellations.groupby("MonthStr")["InvoiceNo"].nunique().reset_index()
+                fig_cancel_trend, ax_cancel_trend = plt.subplots(figsize=(10, 3.5))
+                ax_cancel_trend.plot(cancel_trend["MonthStr"], cancel_trend["InvoiceNo"], marker='o', color='#ef4444', linewidth=2)
+                ax_cancel_trend.fill_between(cancel_trend["MonthStr"], cancel_trend["InvoiceNo"], color='#ef4444', alpha=0.1)
+                ax_cancel_trend.set_title("Jumlah Transaksi yang Dibatalkan / Retur per Bulan", fontweight="bold", color="#1e3a8a")
+                ax_cancel_trend.grid(True, linestyle='--', alpha=0.3)
+                plt.xticks(rotation=45)
+                plt.tight_layout()
+                st.pyplot(fig_cancel_trend)
                 
             st.write("---")
             st.markdown("### 4. Ringkasan Statistik Data Numerik (Data Bersih)")
@@ -332,7 +349,7 @@ else:
             
         st.write("---")
         st.write("### 📈 1. Tren Pendapatan Berkala (Temporal Sales Trend)")
-        sub_tab1, sub_tab2 = st.tabs(["📅 Tren Bulanan (Monthly Revenue)", "🗓️ Pola Hari (Day-of-Week Revenue)"])
+        sub_tab1, sub_tab2, sub_tab3 = st.tabs(["📅 Tren Bulanan (Revenue)", "🗓️ Pola Hari (Day-of-Week)", "👥 Top Customers & Tren Waktu"])
         
         import matplotlib.ticker as ticker
         formatter = ticker.FuncFormatter(lambda x, pos: f'£{x*1e-3:.0f}k' if x >= 1000 else f'£{x:.0f}')
@@ -373,6 +390,48 @@ else:
             plt.tight_layout()
             st.pyplot(fig_dow)
             
+        with sub_tab3:
+            col_st3a, col_st3b = st.columns(2)
+            with col_st3a:
+                st.write("#### 🏆 Top 10 Pelanggan (Pembelian Terbanyak)")
+                if not df_filtered.empty:
+                    top_customers = df_filtered.groupby("CustomerID")["TotalAmount"].sum().reset_index().sort_values(by="TotalAmount", ascending=False).head(10).sort_values(by="TotalAmount", ascending=True)
+                    # Convert to string to avoid float formatting issues
+                    top_customers["CustomerID"] = top_customers["CustomerID"].astype(float).astype(int).astype(str)
+                    
+                    fig_topc, ax_topc = plt.subplots(figsize=(6, 5))
+                    bars_topc = ax_topc.barh(top_customers["CustomerID"], top_customers["TotalAmount"], color="#8b5cf6")
+                    for bar in bars_topc:
+                        width = bar.get_width()
+                        ax_topc.annotate(f'£{width*1e-3:.0f}k' if width >= 1000 else f'£{width:.0f}',
+                                        xy=(width, bar.get_y() + bar.get_height() / 2),
+                                        xytext=(3, 0), textcoords="offset points", ha='left', va='center', fontsize=8, fontweight='bold')
+                    ax_topc.set_xlim(0, top_customers["TotalAmount"].max() * 1.25)
+                    ax_topc.set_title("10 Pelanggan Teratas (Berdasarkan Total Spending)", fontweight="bold", color="#1e3a8a")
+                    ax_topc.xaxis.set_major_formatter(formatter)
+                    plt.tight_layout()
+                    st.pyplot(fig_topc)
+
+            with col_st3b:
+                st.write("#### 📈 Banyaknya Transaksi (Berdasarkan Waktu)")
+                if not df_filtered.empty:
+                    daily_trans = df_filtered.groupby(df_filtered["InvoiceDate"].dt.date)["InvoiceNo"].nunique().reset_index()
+                    daily_trans.columns = ["Date", "Transactions"]
+                    
+                    fig_daily, ax_daily = plt.subplots(figsize=(6, 5))
+                    ax_daily.plot(daily_trans["Date"], daily_trans["Transactions"], color="#f59e0b", linewidth=1.5, alpha=0.5)
+                    # Moving average for trend
+                    daily_trans["MA7"] = daily_trans["Transactions"].rolling(window=7).mean()
+                    ax_daily.plot(daily_trans["Date"], daily_trans["MA7"], color="#d97706", linewidth=2.5, label="7-Day Moving Avg")
+                    
+                    ax_daily.set_title("Tren Jumlah Transaksi per Hari", fontweight="bold", color="#1e3a8a")
+                    ax_daily.set_xlabel("Tanggal")
+                    ax_daily.set_ylabel("Jumlah Transaksi Unik")
+                    ax_daily.legend()
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    st.pyplot(fig_daily)
+            
         st.write("---")
         st.write("### ⚙️ 2 & 4. Operasional Retail & Beban Sistem")
         col_b1, col_b2 = st.columns([1.1, 1])
@@ -400,51 +459,61 @@ else:
             st.write("#### 🏆 Top 10 Produk Terlaris (Top Selling Products)")
             fig_prod, ax_prod = plt.subplots(figsize=(6, 5))
             
-            df_prod_sorted = df_products.sort_values(by="Quantity", ascending=False).head(10).sort_values(by="Quantity", ascending=True)
-            short_names = [p[:25] + "..." if len(p) > 25 else p for p in df_prod_sorted["Product"]]
-            
-            bars_prod = ax_prod.barh(short_names, df_prod_sorted["Quantity"], color="#10b981", alpha=0.8)
-            
-            for bar in bars_prod:
-                width = bar.get_width()
-                ax_prod.annotate(f'{width:,}',
-                                xy=(width, bar.get_y() + bar.get_height() / 2),
-                                xytext=(3, 0),
-                                textcoords="offset points",
-                                ha='left', va='center', fontsize=8, fontweight='bold', color='#065f46')
-                                
-            ax_prod.set_xlim(0, df_prod_sorted["Quantity"].max() * 1.25)
-            ax_prod.set_title("10 Produk Terlaris Berdasarkan Kuantitas Terjual", fontsize=11, fontweight='bold', color='#1e3a8a')
-            ax_prod.set_xlabel("Kuantitas Terjual")
-            ax_prod.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'{x*1e-3:.0f}k' if x >= 1000 else f'{x:.0f}'))
-            ax_prod.grid(True, linestyle='--', alpha=0.3)
-            plt.tight_layout()
-            st.pyplot(fig_prod)
+            if not df_products.empty:
+                df_prod_sorted = df_products.sort_values(by="Quantity", ascending=False).head(10).sort_values(by="Quantity", ascending=True)
+                short_names = [p[:25] + "..." if len(p) > 25 else p for p in df_prod_sorted["Product"]]
+                
+                bars_prod = ax_prod.barh(short_names, df_prod_sorted["Quantity"], color="#10b981", alpha=0.8)
+                
+                for bar in bars_prod:
+                    width = bar.get_width()
+                    ax_prod.annotate(f'{width:,}',
+                                    xy=(width, bar.get_y() + bar.get_height() / 2),
+                                    xytext=(3, 0),
+                                    textcoords="offset points",
+                                    ha='left', va='center', fontsize=8, fontweight='bold', color='#065f46')
+                                    
+                max_qty = df_prod_sorted["Quantity"].max()
+                if pd.notna(max_qty) and max_qty > 0:
+                    ax_prod.set_xlim(0, max_qty * 1.25)
+                    
+                ax_prod.set_title("10 Produk Terlaris Berdasarkan Kuantitas Terjual", fontsize=11, fontweight='bold', color='#1e3a8a')
+                ax_prod.set_xlabel("Kuantitas Terjual")
+                ax_prod.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'{x*1e-3:.0f}k' if x >= 1000 else f'{x:.0f}'))
+                ax_prod.grid(True, linestyle='--', alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig_prod)
+            else:
+                st.info("Data produk kosong pada filter terpilih.")
             
         st.write("---")
         st.write("### 🌍 3. Tren Pertumbuhan Geografis (Geographic Sales Trend)")
         
-        total_uk_sales = df_geo[df_geo["Country"] == "United Kingdom"]["Total_Sales"].values[0]
+        uk_sales_series = df_geo[df_geo["Country"] == "United Kingdom"]["Total_Sales"]
+        total_uk_sales = uk_sales_series.values[0] if not uk_sales_series.empty else 0
         total_non_uk_sales = df_geo[df_geo["Country"] != "United Kingdom"]["Total_Sales"].sum()
         
         c_geo1, c_geo2 = st.columns([1, 1.2])
         
         with c_geo1:
             st.write("#### Perbandingan Pasar Domestik vs Internasional")
-            fig_geo_pie, ax_geo_pie = plt.subplots(figsize=(6, 5))
-            
-            ax_geo_pie.pie(
-                [total_uk_sales, total_non_uk_sales],
-                labels=["Pasar Domestik (UK)", "Pasar Internasional (Non-UK)"],
-                autopct='%1.1f%%',
-                startangle=90,
-                colors=["#1e3a8a", "#10b981"],
-                explode=[0.05, 0],
-                textprops=dict(color="black", fontweight="bold")
-            )
-            ax_geo_pie.set_title("Proporsi Kontribusi Pendapatan Geografis", fontsize=11, fontweight='bold', color='#1e3a8a')
-            plt.tight_layout()
-            st.pyplot(fig_geo_pie)
+            if total_uk_sales > 0 or total_non_uk_sales > 0:
+                fig_geo_pie, ax_geo_pie = plt.subplots(figsize=(6, 5))
+                
+                ax_geo_pie.pie(
+                    [total_uk_sales, total_non_uk_sales],
+                    labels=["Pasar Domestik (UK)", "Pasar Internasional (Non-UK)"],
+                    autopct='%1.1f%%',
+                    startangle=90,
+                    colors=["#1e3a8a", "#10b981"],
+                    explode=[0.05, 0],
+                    textprops=dict(color="black", fontweight="bold")
+                )
+                ax_geo_pie.set_title("Proporsi Kontribusi Pendapatan Geografis", fontsize=11, fontweight='bold', color='#1e3a8a')
+                plt.tight_layout()
+                st.pyplot(fig_geo_pie)
+            else:
+                st.info("Data geografis kosong pada filter terpilih.")
             
         with c_geo2:
             st.write("#### Top 10 Pasar Internasional Terbesar (Excluding UK)")
@@ -452,214 +521,129 @@ else:
             
             df_geo_intl = df_geo[df_geo["Country"] != "United Kingdom"].sort_values(by="Total_Sales", ascending=False).head(10).sort_values(by="Total_Sales", ascending=True)
             
-            bars_geo = ax_geo_bar.barh(df_geo_intl["Country"], df_geo_intl["Total_Sales"], color="#f59e0b", alpha=0.85)
-            
-            for bar in bars_geo:
-                width = bar.get_width()
-                ax_geo_bar.annotate(f'£{width*1e-3:.0f}k',
-                                xy=(width, bar.get_y() + bar.get_height() / 2),
-                                xytext=(3, 0),
-                                textcoords="offset points",
-                                ha='left', va='center', fontsize=8, fontweight='bold', color='#b45309')
-                                
-            ax_geo_bar.set_xlim(0, df_geo_intl["Total_Sales"].max() * 1.25)
-            ax_geo_bar.set_title("Pendapatan dari 10 Negara Internasional Utama", fontsize=11, fontweight='bold', color='#1e3a8a')
-            ax_geo_bar.set_xlabel("Total Penjualan (£)")
-            ax_geo_bar.xaxis.set_major_formatter(formatter)
-            ax_geo_bar.grid(True, linestyle='--', alpha=0.3)
-            plt.tight_layout()
-            st.pyplot(fig_geo_bar)
+            if not df_geo_intl.empty:
+                bars_geo = ax_geo_bar.barh(df_geo_intl["Country"], df_geo_intl["Total_Sales"], color="#f59e0b", alpha=0.85)
+                
+                for bar in bars_geo:
+                    width = bar.get_width()
+                    ax_geo_bar.annotate(f'£{width*1e-3:.0f}k',
+                                    xy=(width, bar.get_y() + bar.get_height() / 2),
+                                    xytext=(3, 0),
+                                    textcoords="offset points",
+                                    ha='left', va='center', fontsize=8, fontweight='bold', color='#b45309')
+                                    
+                max_intl = df_geo_intl["Total_Sales"].max()
+                if pd.notna(max_intl) and max_intl > 0:
+                    ax_geo_bar.set_xlim(0, max_intl * 1.25)
+                    
+                ax_geo_bar.set_title("Pendapatan dari 10 Negara Internasional Utama", fontsize=11, fontweight='bold', color='#1e3a8a')
+                ax_geo_bar.set_xlabel("Total Penjualan (£)")
+                ax_geo_bar.xaxis.set_major_formatter(formatter)
+                ax_geo_bar.grid(True, linestyle='--', alpha=0.3)
+                plt.tight_layout()
+                st.pyplot(fig_geo_bar)
+            else:
+                st.info("Data internasional kosong pada filter terpilih.")
             
         with st.expander("Lihat Data Mentah SQL (Tren Bulanan)"):
             st.dataframe(df_sql)
 
     with tab2:
-        st.subheader("Distribusi & Analisis Karakteristik Segmen")
-        st.write("Data ini bersumber dari koleksi `customer_segments` di MongoDB Atlas.")
+        st.subheader("Analisis Klastering K-Means Dinamis (Centroid-Based)")
+        st.write("Visualisasi ini menjalankan algoritma K-Means secara dinamis. Anda dapat mengatur jumlah kelompok (K) dan mengevaluasi kualitas pemisahan (*clustering*) berdasarkan metrik validasi.")
         
-        with st.spinner("Memproses grafik segmentasi... Mohon tunggu sebentar."):
-            st.write("### 👥 Distribusi & Karakteristik Segmen")
+        n_customers = len(df_mongo)
+        if not df_mongo.empty and n_customers > 2:
+            max_k = min(20, n_customers - 1)
             
-            c1, c2 = st.columns([1, 1])
-        with c1:
-            st.write("#### Proporsi Jumlah Pelanggan (Donut Chart)")
-            fig_pie, ax_pie = plt.subplots(figsize=(6, 5))
-            seg_counts = df_mongo["Segment"].value_counts()
+            selected_k = st.slider("Pilih Jumlah Kelompok (Nilai K)", min_value=2, max_value=max_k, value=df_mongo["Segment"].nunique())
             
-            # Harmonious color palette
-            palette_colors = sns.color_palette("Set2", len(seg_counts))
-            
-            wedges, texts, autotexts = ax_pie.pie(
-                seg_counts, 
-                labels=seg_counts.index, 
-                autopct='%1.1f%%', 
-                startangle=140, 
-                colors=palette_colors,
-                textprops=dict(color="black", fontweight="bold"),
-                pctdistance=0.75,
-                wedgeprops=dict(width=0.4, edgecolor='white') # Donut shape
-            )
-            plt.setp(texts, size=9)
-            plt.setp(autotexts, size=9, weight="bold")
-            ax_pie.set_title("Proporsi Segmen Pelanggan", fontsize=11, fontweight="bold", color="#1e3a8a")
-            plt.tight_layout()
-            st.pyplot(fig_pie)
-            
-        with c2:
-            st.write("#### Distribusi Frekuensi per Segmen")
-            fig_count, ax_count = plt.subplots(figsize=(6, 5))
-            sns.countplot(data=df_mongo, x="Segment", palette="Set2", ax=ax_count)
-            ax_count.set_title("Jumlah Pelanggan per Segmen", fontsize=11, fontweight="bold", color="#1e3a8a")
-            ax_count.set_xlabel("Segmen")
-            ax_count.set_ylabel("Jumlah Pelanggan")
-            plt.xticks(rotation=30)
-            plt.tight_layout()
-            st.pyplot(fig_count)
-            
-        st.write("---")
-        
-        c3, c4 = st.columns([1, 1.2])
-        with c3:
-            st.write("#### 📊 Rata-rata Nilai RFM per Segmen")
-            summary = df_mongo.groupby("Segment").agg({
-                "Recency": "mean",
-                "Frequency": "mean",
-                "Monetary": "mean"
-            }).round(2)
-            summary.columns = ["Rata-rata Recency (Hari)", "Rata-rata Frequency (Transaksi)", "Rata-rata Monetary (£)"]
-            st.table(summary)
-            
-            st.markdown("""
-            * **Recency (Kebaruan)**: Berapa hari sejak transaksi terakhir pelanggan. (Lebih kecil = Lebih baik)
-            * **Frequency (Frekuensi)**: Berapa kali pelanggan berbelanja. (Lebih besar = Lebih baik)
-            * **Monetary (Moneter)**: Total uang yang dibelanjakan pelanggan. (Lebih besar = Lebih baik)
-            """)
-            
-        with c4:
-            st.write("#### 🎯 Pemetaan Spasial RFM Pelanggan (K-Means)")
-            fig_scatter, ax_scatter = plt.subplots(figsize=(7, 5))
-            
-            q_freq = df_mongo["Frequency"].quantile(0.99)
-            q_rec = df_mongo["Recency"].quantile(0.99)
-            
-            sns.scatterplot(
-                data=df_mongo, 
-                x="Recency", 
-                y="Frequency", 
-                hue="Segment", 
-                size="Monetary",
-                sizes=(20, 300), 
-                alpha=0.7, 
-                palette="Set2", 
-                ax=ax_scatter
-            )
-            ax_scatter.set_xlim(-5, q_rec * 1.05)
-            ax_scatter.set_ylim(-1, q_freq * 1.1)
-            ax_scatter.set_title("Scatter Plot Spasial: Recency vs Frequency", fontsize=11, fontweight="bold", color="#1e3a8a")
-            ax_scatter.set_xlabel("Recency (Hari sejak transaksi terakhir)")
-            ax_scatter.set_ylabel("Frequency (Jumlah Transaksi)")
-            ax_scatter.legend(bbox_to_anchor=(1.05, 1), loc='upper left', borderaxespad=0.)
-            plt.tight_layout()
-            st.pyplot(fig_scatter)
-
-    with tab3:
-        st.subheader("Analisis Terintegrasi (Cross-System)")
-        st.write("""
-        Bagian ini mendemonstrasikan integrasi **SQL ↔ NoSQL**. 
-        Sistem menggabungkan data transaksi agregat dari Postgres dengan data profil segmentasi dari MongoDB.
-        """)
-        
-        # Determine dynamic segment names for insights based on actual loaded data
-        avail_segments = df_mongo["Segment"].unique()
-        insight_seg = "Segment-0" if "Segment-0" in avail_segments else ("Champions" if "Champions" in avail_segments else avail_segments[0])
-        
-        st.info(f"💡 Insight Terintegrasi: Segmen '{insight_seg}' berkontribusi sangat besar terhadap pertumbuhan penjualan di periode puncak belanja.")
-        
-        c_i1, c_i2 = st.columns([1.2, 1])
-        with c_i1:
-            st.write("#### 💰 Kontribusi Total Pendapatan per Segmen (Monetary Contribution)")
-            # Calculate sum of Monetary per segment
-            revenue_contrib = df_mongo.groupby("Segment")["Monetary"].sum().reset_index().sort_values(by="Monetary", ascending=False)
-            
-            fig_rev, ax_rev = plt.subplots(figsize=(7, 5.2))
-            bars_rev = ax_rev.barh(revenue_contrib["Segment"], revenue_contrib["Monetary"], color=sns.color_palette("Set2", len(revenue_contrib)))
-            
-            # Add value labels to the bars
-            for bar in bars_rev:
-                width = bar.get_width()
-                ax_rev.annotate(f'£{width:,.0f}',
-                                xy=(width, bar.get_y() + bar.get_height() / 2),
-                                xytext=(5, 0),
-                                textcoords="offset points",
-                                ha='left', va='center', fontsize=9, fontweight='bold', color='#1e3a8a')
-            
-            ax_rev.set_xlim(0, revenue_contrib["Monetary"].max() * 1.2)
-            ax_rev.set_title("Total Akumulasi Pembelanjaan per Segmen (£)", fontsize=11, fontweight="bold", color="#1e3a8a")
-            ax_rev.set_xlabel("Total Kontribusi (£)")
-            ax_rev.set_ylabel("Segmen")
-            import matplotlib.ticker as ticker
-            ax_rev.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'£{x*1e-3:.0f}k' if x >= 1000 else f'£{x:.0f}'))
-            plt.tight_layout()
-            st.pyplot(fig_rev)
-            
-        with c_i2:
-            st.write("#### 🗺️ Matriks Posisi Strategis Segmen (Bubble Chart)")
-            # Group data for bubble chart
-            bubble_data = df_mongo.groupby("Segment").agg({
-                "Recency": "mean",
-                "Frequency": "mean",
-                "Monetary": ["sum", "mean", "count"]
-            }).reset_index()
-            # Flatten multiindex columns
-            bubble_data.columns = ["Segment", "Avg_Recency", "Avg_Frequency", "Total_Monetary", "Avg_Monetary", "Cust_Count"]
-            
-            fig_bubble, ax_bubble = plt.subplots(figsize=(6, 5.2))
-            
-            # Bubble sizes scaled for rendering
-            max_size = bubble_data["Total_Monetary"].max()
-            sizes = [max(100, (val / max_size) * 1500) for val in bubble_data["Total_Monetary"]]
-            
-            scatter_b = ax_bubble.scatter(
-                bubble_data["Avg_Recency"], 
-                bubble_data["Avg_Frequency"], 
-                s=sizes, 
-                c=range(len(bubble_data)), 
-                cmap="Set2", 
-                alpha=0.8,
-                edgecolors="grey", 
-                linewidth=1
-            )
-            
-            # Annotate segment names on bubbles
-            for idx, row in bubble_data.iterrows():
-                ax_bubble.annotate(
-                    row["Segment"],
-                    xy=(row["Avg_Recency"], row["Avg_Frequency"]),
-                    xytext=(0, 0),
-                    ha='center', va='center', fontsize=9, fontweight='bold', color='black'
-                )
+            with st.spinner("Memproses ulang K-Means dan menghitung Centroid..."):
+                # Menyiapkan fitur RFM
+                X_rfm = df_mongo[["Recency", "Frequency", "Monetary"]].copy()
                 
-            ax_bubble.set_title("Matriks RFM: Frekuensi vs Recency Rata-rata\n(Ukuran balon = Total Pendapatan Segmen)", fontsize=11, fontweight="bold", color="#1e3a8a")
-            ax_bubble.set_xlabel("Rata-rata Recency (Hari sejak transaksi terakhir - Lebih kecil = Lebih baik)")
-            ax_bubble.set_ylabel("Rata-rata Frequency (Jumlah Transaksi - Lebih besar = Lebih baik)")
-            ax_bubble.grid(True, linestyle='--', alpha=0.5)
-            # Add vertical and horizontal mean lines for quadrant reference
-            ax_bubble.axvline(df_mongo["Recency"].mean(), color='red', linestyle=':', alpha=0.5, label="Rata-rata Recency Global")
-            ax_bubble.axhline(df_mongo["Frequency"].mean(), color='blue', linestyle=':', alpha=0.5, label="Rata-rata Frequency Global")
-            plt.tight_layout()
-            st.pyplot(fig_bubble)
-            
-        st.write("---")
-        st.write("#### 📦 Variasi & Sebaran Nilai Moneter per Pelanggan (Boxplot)")
-        fig2, ax2 = plt.subplots(figsize=(10, 5))
-        sns.boxplot(data=df_mongo, x="Segment", y="Monetary", palette="Set2", ax=ax2)
-        ax2.set_title("Variasi Nilai Moneter per Segmen", fontsize=11, fontweight="bold", color="#1e3a8a")
-        ax2.set_xlabel("Segmen")
-        ax2.set_ylabel("Monetary (£)")
-        import matplotlib.ticker as ticker
-        ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'£{x*1e-3:.0f}k' if x >= 1000 else f'£{x:.0f}'))
-        plt.tight_layout()
-        st.pyplot(fig2)
+                # Standarisasi wajib sebelum K-Means agar tidak bias pada variabel skala besar (Monetary)
+                scaler = StandardScaler()
+                X_scaled = scaler.fit_transform(X_rfm)
+                
+                # Menjalankan algoritma dengan inisialisasi k-means++ (lebih stabil dari inisiasi acak)
+                kmeans = KMeans(n_clusters=selected_k, init="k-means++", n_init=10, max_iter=300, random_state=42)
+                cluster_labels = kmeans.fit_predict(X_scaled)
+                
+                # Menyimpan hasil klasterisasi dinamis
+                df_dynamic = df_mongo.copy()
+                df_dynamic["Dynamic_Cluster"] = cluster_labels
+                df_dynamic["Dynamic_Segment"] = "Segment-" + df_dynamic["Dynamic_Cluster"].astype(str)
+                
+                # Ekstrak posisi Centroid (dan kembalikan ke skala asli untuk diinterpretasikan)
+                centroids_scaled = kmeans.cluster_centers_
+                centroids_original = scaler.inverse_transform(centroids_scaled)
+                
+                # Menghitung Metrik Evaluasi tanpa label (Unsupervised Evaluation)
+                sil_score = silhouette_score(X_scaled, cluster_labels)
+                db_score = davies_bouldin_score(X_scaled, cluster_labels)
+                ch_score = calinski_harabasz_score(X_scaled, cluster_labels)
+                
+                st.markdown("### 📊 Evaluasi Model (Kualitas Kluster)")
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("K Terpilih", selected_k)
+                m2.metric("Silhouette Score", f"{sil_score:.3f}", help="Semakin mendekati 1 semakin baik (pemisahan kluster rapi).")
+                m3.metric("Davies-Bouldin Index", f"{db_score:.3f}", help="Semakin kecil semakin baik (kluster padat dan terpisah jauh).")
+                m4.metric("Calinski-Harabasz", f"{ch_score:.0f}", help="Semakin besar nilainya semakin padat klusternya.")
+                
+                st.write("---")
+                st.markdown("### 📍 Interpretasi Posisi Centroid (Pusat Kluster)")
+                st.write("Centroid mewakili nilai rata-rata tiap variabel pembentuk di dalam satu kelompok pelanggan.")
+                df_centroids = pd.DataFrame(centroids_original, columns=["Rata-rata Recency (Hari)", "Rata-rata Frequency (Transaksi)", "Rata-rata Monetary (£)"])
+                df_centroids.index = ["Segment-" + str(i) for i in range(selected_k)]
+                st.dataframe(df_centroids.style.format("{:.2f}"))
+                
+                st.write("---")
+                c1, c2 = st.columns([1, 1.2])
+                with c1:
+                    st.write("#### Distribusi Jumlah Pelanggan per Segmen")
+                    fig_c, ax_c = plt.subplots(figsize=(6, 5))
+                    sns.countplot(data=df_dynamic, x="Dynamic_Segment", palette="Set2", ax=ax_c, order=sorted(df_dynamic["Dynamic_Segment"].unique()))
+                    ax_c.set_xlabel("Segmen")
+                    ax_c.set_ylabel("Jumlah Pelanggan")
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                    st.pyplot(fig_c)
+                    
+                with c2:
+                    st.write("#### 🎯 Pemetaan Spasial K-Means & Letak Centroid")
+                    fig_scatter, ax_scatter = plt.subplots(figsize=(7, 5))
+                    
+                    # Plot Titik Pelanggan
+                    sns.scatterplot(
+                        data=df_dynamic, x="Recency", y="Frequency", 
+                        hue="Dynamic_Segment", size="Monetary", sizes=(20, 300), 
+                        alpha=0.6, palette="Set2", ax=ax_scatter
+                    )
+                    
+                    # Plot Titik Centroid
+                    ax_scatter.scatter(
+                        df_centroids["Rata-rata Recency (Hari)"], 
+                        df_centroids["Rata-rata Frequency (Transaksi)"], 
+                        marker='X', s=250, c='red', edgecolor='black', label="Centroid (Pusat)", zorder=10
+                    )
+                    
+                    ax_scatter.set_xlabel("Recency (Hari)")
+                    ax_scatter.set_ylabel("Frequency (Jumlah Transaksi)")
+                    ax_scatter.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+                    plt.tight_layout()
+                    st.pyplot(fig_scatter)
+                    
+                st.write("---")
+                st.write("#### 📦 Variasi Nilai Moneter (Monetary) per Segmen")
+                fig2, ax2 = plt.subplots(figsize=(10, 4.5))
+                sns.boxplot(data=df_dynamic, x="Dynamic_Segment", y="Monetary", palette="Set2", ax=ax2, order=sorted(df_dynamic["Dynamic_Segment"].unique()))
+                import matplotlib.ticker as ticker
+                ax2.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, pos: f'£{x*1e-3:.0f}k' if x >= 1000 else f'£{x:.0f}'))
+                plt.tight_layout()
+                st.pyplot(fig2)
+        else:
+            st.warning("Data pelanggan tidak mencukupi untuk melakukan K-Means Clustering.")
 
     with tab4:
         st.subheader("Analisis Kohort (Customer Retention Rate)")

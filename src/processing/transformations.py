@@ -22,13 +22,16 @@ def compute_rfm(df_sales: DataFrame, reference_date=None) -> DataFrame:
         ref = df_sales.select(fmax(col("InvoiceTS")).alias("ref_ts")).collect()[0]["ref_ts"]
         reference_date = ref
 
-    # RFM agregasi
+    # RFM agregasi + Fitur Preprocessing Baru
     rfm = (
         df_sales.groupBy("CustomerID")
         .agg(
             fmax(col("InvoiceTS")).alias("LastPurchaseTS"),
             countDistinct(col("InvoiceNo")).alias("Frequency"),
             fsum(col("TotalAmount")).alias("Monetary"),
+            # Membawa fitur hasil preprocessing modular untuk clustering yang lebih kaya
+            fmax(col("Country_Encoded")).alias("Country_Encoded"),
+            fsum(col("Quantity")).alias("Sum_Qty")
         )
         .withColumn("Recency", datediff(lit(reference_date), col("LastPurchaseTS")))
     )
